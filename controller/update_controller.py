@@ -21,7 +21,7 @@ class UpdateController:
         try:
             json_data = json.loads(chatgpt_response)
             if isinstance(json_data, dict):
-                return [k.lower() for k in list(json_data.keys())]
+                return [k for k in list(json_data.keys())]
             else:
                 return None
         except ValueError:
@@ -64,7 +64,7 @@ class UpdateController:
             if match:
                 bad_smells_list = match.group(1)
                 return ((bad_smells_list.replace('}', '').
-                        replace('{', '').replace('"', '')).replace('\n', '')
+                         replace('{', '').replace('"', '')).replace('\n', '')
                         .replace('[', '').replace(']', ''))
         return None
 
@@ -91,17 +91,34 @@ class UpdateController:
             session.close()
 
     @staticmethod
+    def __simple_parser(text: str) -> str:
+        return (str(text).replace('}', '').
+                replace('{', '').replace('"', '').
+                replace('\n', '').replace('[', '').
+                replace(']', ''))
+
+    @staticmethod
     def __bad_answer(item: typing.Type[BadSmell]) -> None:
         bad_smells = UpdateController.__check_json_and_get_keys(item.chat_gpt_response)
         if "smell" in str(bad_smells):
             key = [smell for smell in bad_smells if "smell" in smell.lower()]
-            print(f"GPT {item.chat_gpt_response}")
             if len(key) > 1:
-                gpt_response = json.loads(item.chat_gpt_response)[key[1]]
-                print(f"GPT RESPONSE {gpt_response}")
+                if "features" in str(item.chat_gpt_response):
+                    gpt_response = json.loads(item.chat_gpt_response)['features']
+                else:
+                    gpt_response = json.loads(item.chat_gpt_response)[key[1]]
+                item.chat_gpt_response = UpdateController.__simple_parser(gpt_response)
             else:
                 gpt_response = json.loads(item.chat_gpt_response)[key[0]]
-                print(f"SECOND GPT RESPONSE {gpt_response}")
+                if "smells" not in str(gpt_response):
+                    item.chat_gpt_response = UpdateController.__simple_parser(gpt_response)
+                else:
+                    item.chat_gpt_response = ("Incoherent response format,"
+                                              " very different from what was expected.")
+            item.valid_bad_smell = True
+            item.dt_insertion = datetime.datetime.now()
+            item.found_any = True
+            item.bad_smell_not_found = [x for x in gpt_response if str(x).lower() not in str(item.bad_smell_in_base).lower()]
         else:
             item.chat_gpt_response = ("Incoherent response format,"
                                       " very different from what was expected.")
@@ -109,10 +126,11 @@ class UpdateController:
             item.dt_insertion = datetime.datetime.now()
             item.found_any = False
             item.bad_smell_not_found = item.bad_smell_in_base
-        """with create_session() as session:
+        print(item.chat_gpt_response)
+        with create_session() as session:
             session.add(item)
             session.commit()
-            session.close()"""
+            session.close()
 
     def run(self) -> None:
         offset = 0
@@ -141,7 +159,7 @@ class UpdateController:
                                 LogMaker.write_log(f"Fail to Insert into gptcheat id_base: {item.id_base}"
                                                    f" id_smell: {item.id_bad_smell}", "info")
                         else:
-                            ... # implementar recuperacao de smells
+                            ...  # implementar recuperacao de smells
                         continue
                     elif len(keys) > 2:
                         self.__bad_answer(item)
@@ -150,8 +168,8 @@ class UpdateController:
                     if json_keys_values is not None:
                         for index, (key, value) in enumerate(json_keys_values.items()):
                             ...
-                            #resolved = self.__parser(item.chat_gpt_response, value)
-                            #print(resolved)
+                            # resolved = self.__parser(item.chat_gpt_response, value)
+                            # print(resolved)
                     else:
                         print("Rodar o parser para string padrão")
                         print(item.chat_gpt_response)
@@ -160,5 +178,5 @@ class UpdateController:
                     self.__not_question += 1
                     LogMaker.write_log(f"Without question {self.__not_question} -> id base: {item.id_base}"
                                        f" -> Link: {item.url_github}", "warning")
-                #sys.exit(0)
+                # sys.exit(0)
             offset += self.__offset
