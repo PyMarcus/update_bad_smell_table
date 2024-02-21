@@ -22,7 +22,7 @@ class LogMaker:
 
     @staticmethod
     def write_log(message: str, level: str) -> None:
-        print(message)
+        #print(message)
         match level.lower():
             case "info":
                 logging.info(message)
