@@ -1,13 +1,12 @@
-import datetime
 import re
-import json
 import sys
+import json
 import typing
-from typing import Type
-from database import create_session
+import datetime
 from database import LogMaker
-from repository import BadSmellDao
 from repository import GptCheatDao
+from repository import BadSmellDao
+from database import create_session
 from models import GptCheat, BadSmell
 
 
@@ -93,13 +92,14 @@ class UpdateController:
     @staticmethod
     def __simple_parser(text: str) -> str:
         return (str(text).replace('}', '').
-                replace('{', '').replace('"', '').
-                replace('\n', '').replace('[', '').
+                replace('{', '').
+                replace('"', '').
+                replace('\n', '').
+                replace('[', '').
                 replace(']', ''))
 
-    @staticmethod
-    def __bad_answer(item: typing.Type[BadSmell]) -> None:
-        bad_smells = UpdateController.__check_json_and_get_keys(item.chat_gpt_response)
+    def __bad_answer(self, item: typing.Type[BadSmell]) -> None:
+        bad_smells = self.__check_json_and_get_keys(item.chat_gpt_response)
         if "smell" in str(bad_smells):
             key = [smell for smell in bad_smells if "smell" in smell.lower()]
             if len(key) > 1:
@@ -107,26 +107,95 @@ class UpdateController:
                     gpt_response = json.loads(item.chat_gpt_response)['features']
                 else:
                     gpt_response = json.loads(item.chat_gpt_response)[key[1]]
-                item.chat_gpt_response = UpdateController.__simple_parser(gpt_response)
+                item.bad_smell_gpt = self.__simple_parser(gpt_response)
             else:
                 gpt_response = json.loads(item.chat_gpt_response)[key[0]]
                 if "smells" not in str(gpt_response):
-                    item.chat_gpt_response = UpdateController.__simple_parser(gpt_response)
+                    item.bad_smell_gpt = self.__simple_parser(gpt_response)
                 else:
-                    item.chat_gpt_response = ("Incoherent response format,"
-                                              " very different from what was expected.")
+                    item.bad_smell_gpt = ("Incoherent response format,"
+                                          " very different from what was expected.")
             item.valid_bad_smell = True
             item.dt_insertion = datetime.datetime.now()
             item.found_any = True
-            item.bad_smell_not_found = [x for x in gpt_response if str(x).lower() not in str(item.bad_smell_in_base).lower()]
+            item.bad_smell_not_found = [x for x in gpt_response if str(x).lower()
+                                        not in str(item.bad_smell_in_base).lower()]
         else:
-            item.chat_gpt_response = ("Incoherent response format,"
-                                      " very different from what was expected.")
+            item.bad_smell_gpt = ("Incoherent response format,"
+                                  " very different from what was expected.")
             item.valid_bad_smell = False
             item.dt_insertion = datetime.datetime.now()
             item.found_any = False
             item.bad_smell_not_found = item.bad_smell_in_base
-        print(item.chat_gpt_response)
+        with create_session() as session:
+            session.add(item)
+            session.commit()
+            session.close()
+
+    def __parser(self, item: typing.Type[BadSmell], values) -> None:
+        item.bad_smell_gpt = self.__simple_parser(values)
+        item.valid_bad_smell = True
+        item.dt_insertion = datetime.datetime.now()
+        item.found_any = True
+        item.bad_smell_not_found = [x for x in values if str(x).lower()
+                                    not in str(item.bad_smell_in_base).lower()]
+        with create_session() as session:
+            session.add(item)
+            session.commit()
+            session.close()
+
+    @staticmethod
+    def __negative_parser(item: typing.Type[BadSmell]) -> None:
+        item.bad_smell_gpt = ""
+        item.valid_bad_smell = False
+        item.dt_insertion = datetime.datetime.now()
+        item.found_any = False
+        item.bad_smell_not_found = item.bad_smell_in_base
+        with create_session() as session:
+            session.add(item)
+            session.commit()
+            session.close()
+
+    def __verify(self, item: typing.Type[BadSmell]) -> None:
+        json_keys_values = self.__check_json_and_get_values(item.chat_gpt_response)
+        if json_keys_values is not None:
+            resolved = False
+            for index, (key, value) in enumerate(json_keys_values.items()):
+                if not index:
+                    resolved = self.__check_if_there_is_yes_or_not(str(item.chat_gpt_response))
+                    item.found_any = resolved
+                elif resolved:
+                    self.__parser(item, value)
+                else:
+                    self.__negative_parser(item)
+        else:
+            print("Rodar o parser para string padrão")
+            print(item.chat_gpt_response)
+            sys.exit(0)
+
+    @staticmethod
+    def __gpt_cheat(item: typing.Type[BadSmell]) -> None:
+        gpt_cheat: GptCheat = GptCheat(
+            id=item.id_source_code,
+            id_bad_smell=item.id_bad_smell,
+            nr_question=item.nr_question,
+            id_base=item.id_base
+        )
+        if GptCheatDao.create(gpt_cheat):
+            LogMaker.write_log(f"Inserted into gptcheat id_base: {item.id_base}"
+                               f" id_smell: {item.id_bad_smell}", "info")
+        else:
+            LogMaker.write_log(f"Fail to Insert into gptcheat id_base: {item.id_base}"
+                               f" id_smell: {item.id_bad_smell}", "info")
+
+    def __save_with_low_keys(self, item: typing.Type[BadSmell], smell: str) -> None:
+        smell: str = self.__simple_parser(smell)
+        item.bad_smell_gpt = smell
+        item.valid_bad_smell = True
+        item.dt_insertion = datetime.datetime.now()
+        item.found_any = True
+        item.bad_smell_not_found = [x for x in smell if str(x).lower()
+                                    not in str(item.bad_smell_in_base).lower()]
         with create_session() as session:
             session.add(item)
             session.commit()
@@ -145,35 +214,15 @@ class UpdateController:
                         smell, exists = self.__parser_low_keys(item.chat_gpt_response)
 
                         if exists and not smell:
-                            # self.__update_low_row(item)
-                            gpt_cheat: GptCheat = GptCheat(
-                                id=item.id_source_code,
-                                id_bad_smell=item.id_bad_smell,
-                                nr_question=item.nr_question,
-                                id_base=item.id_base
-                            )
-                            if GptCheatDao.create(gpt_cheat):
-                                LogMaker.write_log(f"Inserted into gptcheat id_base: {item.id_base}"
-                                                   f" id_smell: {item.id_bad_smell}", "info")
-                            else:
-                                LogMaker.write_log(f"Fail to Insert into gptcheat id_base: {item.id_base}"
-                                                   f" id_smell: {item.id_bad_smell}", "info")
-                        else:
-                            ...  # implementar recuperacao de smells
+                            self.__update_low_row(item)
+                            self.__gpt_cheat(item)
+                        elif exists and smell:
+                            self.__save_with_low_keys(item, smell)
                         continue
                     elif len(keys) > 2:
                         self.__bad_answer(item)
                         continue
-                    json_keys_values = self.__check_json_and_get_values(item.chat_gpt_response)
-                    if json_keys_values is not None:
-                        for index, (key, value) in enumerate(json_keys_values.items()):
-                            ...
-                            # resolved = self.__parser(item.chat_gpt_response, value)
-                            # print(resolved)
-                    else:
-                        print("Rodar o parser para string padrão")
-                        print(item.chat_gpt_response)
-                        sys.exit(0)
+                    self.__verify(item)
                 else:
                     self.__not_question += 1
                     LogMaker.write_log(f"Without question {self.__not_question} -> id base: {item.id_base}"
