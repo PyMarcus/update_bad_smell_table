@@ -83,11 +83,12 @@ class UpdateController:
             item.bad_smell_gpt = "Not specified"
             item.found_any = False
             item.bad_smell_not_found = item.bad_smell_in_base
+            item.bad_smell_in_base = False
             item.valid_bad_smell = False
             item.dt_insertion = datetime.datetime.now()
             session.add(item)
             session.commit()
-            session.close()
+            print("OK")
 
     @staticmethod
     def __simple_parser(text: str) -> str:
@@ -96,7 +97,7 @@ class UpdateController:
                 replace('"', '').
                 replace('\n', '').
                 replace('[', '').
-                replace(']', ''))
+                replace(']', '').replace("'", '')).lower()
 
     def __bad_answer(self, item: typing.Type[BadSmell]) -> None:
         bad_smells = self.__check_json_and_get_keys(item.chat_gpt_response)
@@ -118,31 +119,51 @@ class UpdateController:
             item.valid_bad_smell = True
             item.dt_insertion = datetime.datetime.now()
             item.found_any = True
-            item.bad_smell_not_found = [x for x in gpt_response if str(x).lower()
-                                        not in str(item.bad_smell_in_base).lower()]
+            item.bad_smell_not_found = item.badsmell_base if not (
+                any(item.badsmell_base in x for x in self.__simple_parser(str(gpt_response)).split(','))) else ''
+            if item.bad_smell_not_found:
+                item.bad_smell_in_base = False
+            else:
+                item.bad_smell_in_base = True
+            item.bad_smell_not_in_the_base = self.__simple_parser(str([x for x in
+                                                                       self.__simple_parser(str(gpt_response)).split(',')
+                                                                       if item.badsmell_base.lower() not in x.lower()]))
+
+
         else:
             item.bad_smell_gpt = ("Incoherent response format,"
                                   " very different from what was expected.")
             item.valid_bad_smell = False
             item.dt_insertion = datetime.datetime.now()
             item.found_any = False
+            item.bad_smell_in_base = False
             item.bad_smell_not_found = item.bad_smell_in_base
         with create_session() as session:
             session.add(item)
             session.commit()
-            session.close()
+            print("OK1")
 
     def __parser(self, item: typing.Type[BadSmell], values) -> None:
-        item.bad_smell_gpt = self.__simple_parser(values)
+        result = self.__simple_parser(values)
+        item.bad_smell_gpt = result
         item.valid_bad_smell = True
         item.dt_insertion = datetime.datetime.now()
         item.found_any = True
-        item.bad_smell_not_found = [x for x in values if str(x).lower()
-                                    not in str(item.bad_smell_in_base).lower()]
+        item.bad_smell_not_found = item.badsmell_base if not (
+            any(item.badsmell_base in x for x in self.__simple_parser(str(result)).split(','))) else ''
+
+        if item.bad_smell_not_found:
+            item.bad_smell_in_base = False
+        else:
+            item.bad_smell_in_base = True
+        item.bad_smell_not_in_the_base = self.__simple_parser(str([x for x in
+                                                                   self.__simple_parser(result).split(',')
+                                                                   if item.badsmell_base.lower() not in x.lower()]))
         with create_session() as session:
             session.add(item)
             session.commit()
             session.close()
+            print("OK2")
 
     @staticmethod
     def __negative_parser(item: typing.Type[BadSmell]) -> None:
@@ -150,11 +171,13 @@ class UpdateController:
         item.valid_bad_smell = False
         item.dt_insertion = datetime.datetime.now()
         item.found_any = False
+        item.bad_smell_in_base = False
         item.bad_smell_not_found = item.bad_smell_in_base
         with create_session() as session:
             session.add(item)
             session.commit()
             session.close()
+            print("OK3")
 
     def __verify(self, item: typing.Type[BadSmell]) -> None:
         json_keys_values = self.__check_json_and_get_values(item.chat_gpt_response)
@@ -165,9 +188,15 @@ class UpdateController:
                     resolved = self.__check_if_there_is_yes_or_not(str(item.chat_gpt_response))
                     item.found_any = resolved
                 elif resolved:
-                    self.__parser(item, value)
+                    try:
+                        self.__parser(item, value)
+                    except Exception as err:
+                        LogMaker.write_log(f"error to update id_base {item.id_base} {err}", "error")
                 else:
-                    self.__negative_parser(item)
+                    try:
+                        self.__negative_parser(item)
+                    except Exception as err:
+                        LogMaker.write_log(f"error to update id_base {item.id_base} {err}", "error")
         else:
             print("Rodar o parser para string padrão")
             print(item.chat_gpt_response)
@@ -194,12 +223,20 @@ class UpdateController:
         item.valid_bad_smell = True
         item.dt_insertion = datetime.datetime.now()
         item.found_any = True
-        item.bad_smell_not_found = [x for x in smell if str(x).lower()
-                                    not in str(item.bad_smell_in_base).lower()]
+        item.bad_smell_not_found = item.badsmell_base if not (
+            any(item.badsmell_base in x for x in self.__simple_parser(str(smell)).split(','))) else ''
+        if item.bad_smell_not_found:
+            item.bad_smell_in_base = False
+        else:
+            item.bad_smell_in_base = True
+        item.bad_smell_not_in_the_base = self.__simple_parser(str([x for x in
+                                                                   self.__simple_parser(smell).split(',')
+                                                                   if item.badsmell_base.lower() not in x.lower()]))
         with create_session() as session:
             session.add(item)
             session.commit()
             session.close()
+            print("OK4")
 
     def run(self) -> None:
         offset = 0
@@ -212,12 +249,17 @@ class UpdateController:
                 if keys:
                     if len(keys) < 2 or "NO" in str(item.chat_gpt_response):
                         smell, exists = self.__parser_low_keys(item.chat_gpt_response)
-
                         if exists and not smell:
-                            self.__update_low_row(item)
-                            self.__gpt_cheat(item)
+                            try:
+                                self.__update_low_row(item)
+                                self.__gpt_cheat(item)
+                            except Exception as err:
+                                LogMaker.write_log(f"error to update id_base {item.id_base} {err}", "error")
                         elif exists and smell:
-                            self.__save_with_low_keys(item, smell)
+                            try:
+                                self.__save_with_low_keys(item, smell)
+                            except Exception as err:
+                                LogMaker.write_log(f"error to update id_base {item.id_base} {err}", "error")
                         continue
                     elif len(keys) > 2:
                         self.__bad_answer(item)
@@ -227,5 +269,4 @@ class UpdateController:
                     self.__not_question += 1
                     LogMaker.write_log(f"Without question {self.__not_question} -> id base: {item.id_base}"
                                        f" -> Link: {item.url_github}", "warning")
-                # sys.exit(0)
             offset += self.__offset
